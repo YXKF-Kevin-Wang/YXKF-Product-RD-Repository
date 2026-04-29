@@ -7,12 +7,15 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#E85D4A">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>YXKF产品研发库</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Noto+Sans+SC:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <link id="cdn-fonts" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Noto+Sans+SC:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <link id="cdn-fontawesome" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script id="cdn-qrcode" src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <style>
         :root {
             --primary: #E85D4A;
@@ -927,6 +930,38 @@
         {id:8,name:"成都椒麻特调",price:33,cost:10,category:"city",image:"https://picsum.photos/id/65/400/400",description:"花椒与冷萃的奇妙碰撞，微麻回甘，致敬成都烟火气",colorTag:"棕红",taste:"微麻回甘",sellingPoints:["花椒特调","城市限定","致敬成都"],specs:[{label:"容量",value:"350ml"},{label:"限定区域",value:"成都门店"},{label:"辣度",value:"微麻"}],ingredients:["冷萃咖啡","花椒糖浆","鲜柠檬"],functions:["创意体验","城市风味"],scenarios:["打卡","猎奇","旅行"],status:true,createdAt:Date.now()-70000}
     ];
 
+    // ==================== 自动版本检测 ====================
+    // 对 initialData + DEFAULT_CATS + DEFAULT_SETTINGS 计算哈希值
+    // 当编辑任何产品数据、分类或设置时，哈希值自动变化，触发用户端刷新
+    (function(){
+        var src=JSON.stringify(initialData)+'|'+JSON.stringify(DEFAULT_CATS)+'|'+JSON.stringify(DEFAULT_SETTINGS);
+        var h=5381;for(var i=0;i<src.length;i++){h=((h<<5)+h)+src.charCodeAt(i);h=h&h;}
+        var ver='v'+Math.abs(h).toString(36);
+        var K='_yxkf_auto_ver',RK='_yxkf_reload';
+        var stored=localStorage.getItem(K);
+        if(stored&&stored!==ver){
+            if(!sessionStorage.getItem(RK)){
+                sessionStorage.setItem(RK,'1');
+                localStorage.setItem(K,ver);
+                location.reload();
+                return;
+            }
+            sessionStorage.removeItem(RK);
+        }
+        localStorage.setItem(K,ver);
+        sessionStorage.removeItem(RK);
+        // 自动给外部 CDN 链接附加版本号，确保资源同步更新
+        ['cdn-fonts','cdn-fontawesome','cdn-qrcode'].forEach(function(id){
+            var el=document.getElementById(id);if(!el)return;
+            try{
+                var url=new URL(el.href||el.src);
+                url.searchParams.set('_v',ver);
+                if(el.tagName==='LINK')el.href=url.toString();else el.src=url.toString();
+            }catch(e){}
+        });
+    })();
+    // ==================== 自动版本检测结束 ====================
+
     let products=[], categories=[], favorites=new Set(), settings={...DEFAULT_SETTINGS};
     let currentCat='all', debounce=null, loginAttempts=0, lockoutUntil=0;
     let filterState={sort:'default',categories:[],priceMin:null,priceMax:null,tags:[]};
@@ -998,21 +1033,18 @@
     window.selectCat=function(catId){currentCat=catId;if(filterState.categories.length>0){filterState.categories=[];document.getElementById('filter-count').style.display='none';document.getElementById('filter-trigger').classList.remove('active');}renderCatSidebar();renderCatTabs();renderProducts();};
     function renderCatSelect(){const sel=document.getElementById('f-category');const sorted=[...categories].sort((a,b)=>(a.order||0)-(b.order||0));const prev=sel.value;sel.innerHTML='';sorted.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;sel.appendChild(o);});if(prev&&sorted.find(c=>c.id===prev))sel.value=prev;}
 
-    // ===== 全字段搜索核心函数 =====
     function buildSearchText(p) {
-        // 将产品的所有文本字段拼接为一个搜索字符串
         const parts = [
             p.name || '',
             p.description || '',
             p.colorTag && p.colorTag !== '-' ? p.colorTag : '',
             p.taste && p.taste !== '-' ? p.taste : '',
-            getCatName(p.category),  // 分类名称也参与搜索
-            String(p.price),         // 价格转为字符串参与搜索
+            getCatName(p.category),
+            String(p.price),
             ...(p.sellingPoints || []),
             ...(p.ingredients || []),
             ...(p.functions || []),
             ...(p.scenarios || []),
-            // 规格参数的 label 和 value 都参与搜索
             ...(p.specs || []).map(s => (s.label || '') + ' ' + (s.value || ''))
         ];
         return parts.join(' ').toLowerCase();
@@ -1021,27 +1053,19 @@
     function getFiltered(){
         const term=(document.getElementById('search-input').value||'').toLowerCase().trim();
         let f=products.filter(p=>p.status);
-
-        // 有搜索词时：全字段全局搜索，忽略分类筛选
         if(term){
             f=f.filter(p=>{
                 const fullText = buildSearchText(p);
-                // 支持多关键词空格分隔，全部命中才算匹配
                 const keywords = term.split(/\s+/).filter(Boolean);
                 return keywords.every(kw => fullText.includes(kw));
             });
         } else {
-            // 无搜索词时：按分类筛选
             if(filterState.categories.length>0){f=f.filter(p=>filterState.categories.includes(p.category));}
             else if(currentCat!=='all'){f=f.filter(p=>p.category===currentCat);}
         }
-
-        // 价格区间筛选
         if(filterState.priceMin!==null)f=f.filter(p=>p.price>=filterState.priceMin);
         if(filterState.priceMax!==null)f=f.filter(p=>p.price<=filterState.priceMax);
-        // 标签筛选
         if(filterState.tags.length>0){f=f.filter(p=>{const all=[...(p.sellingPoints||[]),...(p.functions||[]),...(p.scenarios||[]),p.colorTag,p.taste].filter(Boolean);return filterState.tags.some(t=>all.includes(t));});}
-        // 排序
         switch(filterState.sort){case'price-asc':f.sort((a,b)=>a.price-b.price);break;case'price-desc':f.sort((a,b)=>b.price-a.price);break;case'newest':f.sort((a,b)=>b.createdAt-a.createdAt);break;default:f.sort((a,b)=>b.createdAt-a.createdAt);break;}
         return f;
     }
@@ -1096,24 +1120,75 @@
     window.delCat=function(id){const count=products.filter(p=>p.category===id).length;if(count>0){toast(`该分类下有${count}个产品，无法删除`,'error');return;}if(!confirm('确定删除此分类？'))return;categories=categories.filter(c=>c.id!==id);saveCats();renderAll();toast('分类已删除','info');};
     window.saveCat=function(){const name=document.getElementById('cf-name').value.trim();if(!name){toast('请输入分类名称','error');return;}const color=document.getElementById('cf-color').value;const icon=document.getElementById('cf-icon').value;if(editingCatId){const c=getCat(editingCatId);if(c){c.name=name;c.color=color;c.icon=icon;}}else{categories.push({id:genId(name),name:name,color:color,icon:icon,order:categories.length});}saveCats();closeCatForm();renderAll();toast(editingCatId?'分类已更新':'分类已添加','success');};
 
-    window.exportData=function(){const data={products,categories,favorites:[...favorites],settings};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='YXKF产品研发库_'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(url);toast('数据已导出','success');};
-    window.triggerImport=function(){document.getElementById('import-file').click();};
-    window.importData=function(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=function(ev){try{const data=JSON.parse(ev.target.result);if(data.products)products=data.products.map(migrateProduct);if(data.categories)categories=data.categories;if(data.favorites)favorites=new Set(data.favorites);if(data.settings)settings={...DEFAULT_SETTINGS,...data.settings};save();saveCats();saveSettingsToStorage();toast('数据已导入','success');}catch(err){toast('导入失败，请检查文件格式','error');}};reader.readAsText(file);e.target.value='';};
+    window.exportData=function(){
+        const data={products,categories,favorites:[...favorites],settings};
+        const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=url;
+        a.download='YXKF产品研发库_'+new Date().toISOString().slice(0,10)+'.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('数据已导出','success');
+    };
 
-    window.switchTab=function(tab,el){document.querySelectorAll('.tabbar-item').forEach(b=>b.classList.remove('active'));el.classList.add('active');if(tab==='home'){settings.layoutStyle='list';applySettings();renderCatSidebar();renderProducts();}};
-    window.showQRModal=function(){document.getElementById('qr-modal').classList.add('show');document.getElementById('qr-url').textContent=window.location.href;const qr=document.getElementById('qrcode');qr.innerHTML='';try{new QRCode(qr,{text:window.location.href,width:160,height:160,colorDark:'#1D1D1F',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});}catch(e){qr.innerHTML='<div style="padding:20px;color:var(--text-3);font-size:12px;">二维码加载中...</div>';}};
+    window.triggerImport=function(){document.getElementById('import-file').click();};
+    window.importData=function(e){
+        const file=e.target.files[0];
+        if(!file)return;
+        const reader=new FileReader();
+        reader.onload=function(ev){
+            try{
+                const data=JSON.parse(ev.target.result);
+                if(data.products)products=data.products.map(migrateProduct);
+                if(data.categories)categories=data.categories;
+                if(data.favorites)favorites=new Set(data.favorites);
+                if(data.settings)settings={...DEFAULT_SETTINGS,...data.settings};
+                save();saveCats();saveSettingsToStorage();
+                toast('数据已导入','success');
+            }catch(err){toast('导入失败，文件格式错误','error');}
+        };
+        reader.readAsText(file);
+        e.target.value='';
+    };
+
+    window.showQRModal=function(){
+        const url=window.location.href;
+        document.getElementById('qr-url').textContent=url;
+        const qrDiv=document.getElementById('qrcode');
+        qrDiv.innerHTML='';
+        try{new QRCode(qrDiv,{text:url,width:160,height:160,colorDark:'#1D1D1F',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});}catch(e){qrDiv.innerHTML='<p style="color:var(--text-3);font-size:12px;">二维码生成失败</p>';}
+        document.getElementById('qr-modal').classList.add('show');
+    };
     window.closeQRModal=function(){document.getElementById('qr-modal').classList.remove('show');};
 
-    document.getElementById('search-input').addEventListener('input',function(){clearTimeout(debounce);debounce=setTimeout(renderProducts,200);});
-    let pressTimer=null;const logoArea=document.getElementById('logo-area');
-    logoArea.addEventListener('mousedown',()=>{pressTimer=setTimeout(()=>{showAdminLogin();},3000);});
-    logoArea.addEventListener('touchstart',()=>{pressTimer=setTimeout(()=>{showAdminLogin();document.getElementById('longpress-hint').classList.remove('show');},3000);document.getElementById('longpress-hint').classList.add('show');},{passive:true});
-    logoArea.addEventListener('mouseup',()=>{clearTimeout(pressTimer);});
-    logoArea.addEventListener('mouseleave',()=>{clearTimeout(pressTimer);});
-    logoArea.addEventListener('touchend',()=>{clearTimeout(pressTimer);document.getElementById('longpress-hint').classList.remove('show');},{passive:true});
+    // 搜索输入监听
+    document.getElementById('search-input').addEventListener('input',function(){
+        clearTimeout(debounce);
+        debounce=setTimeout(renderProducts,200);
+    });
 
-    loadData();renderAll();
-    setTimeout(()=>{document.getElementById('longpress-hint').classList.add('show');setTimeout(()=>document.getElementById('longpress-hint').classList.remove('show'),3000);},1500);
+    // 长按 Logo 进入管理后台
+    (function(){
+        var logoArea=document.getElementById('logo-area');
+        var hint=document.getElementById('longpress-hint');
+        var timer=null;
+        logoArea.addEventListener('touchstart',function(){
+            timer=setTimeout(function(){
+                if(!isAdminLoggedIn()){showAdminLogin();}else{openAdmin();}
+            },3000);
+        });
+        logoArea.addEventListener('touchend',function(){clearTimeout(timer);});
+        logoArea.addEventListener('touchmove',function(){clearTimeout(timer);});
+        if(!localStorage.getItem('_yxkf_hint')){
+            setTimeout(function(){hint.classList.add('show');setTimeout(function(){hint.classList.remove('show');localStorage.setItem('_yxkf_hint','1');},3000);},2000);
+        }
+    })();
+
+    // 初始化
+    loadData();
+    renderAll();
+
 })();
 </script>
 </body>
